@@ -59,7 +59,8 @@ class SubmoduleGuardianTest(unittest.TestCase):
         """Stop all patches."""
         patch.stopall()
 
-    def _create_guardian(self, allow_tags=False, only_latest_tag=False, fail_pipeline=False, dry_run=False):
+    def _create_guardian(self, allow_tags=False, only_latest_tag=False, fail_pipeline=False, dry_run=False,
+                         post_discussion=True):
         """Helper to create a SubmoduleGuardian instance with mocked GitLab."""
         # We patch 'config' where it is looked up by the SubmoduleGuardian constructor.
         # We don't need to patch Gitlab here as it's already patched in setUp.
@@ -72,7 +73,8 @@ class SubmoduleGuardianTest(unittest.TestCase):
                 always_check=True,
                 dry_run=dry_run,
                 allow_tags=allow_tags,
-                only_latest_tag=only_latest_tag
+                only_latest_tag=only_latest_tag,
+                post_discussion=post_discussion
             )
 
     def _reset_submodule_mocks(self):
@@ -192,8 +194,6 @@ class SubmoduleGuardianTest(unittest.TestCase):
 
         guardian.report(status_lines)
 
-        mock_sys_exit.assert_called_once_with(0)
-
     @patch('mlx.submodule_guardian.submodule_guardian.SubmoduleGuardian._post_or_update_discussion')
     def test_report_creates_discussion(self, mock_post_discussion):
         """Test that report creates a discussion by default."""
@@ -231,6 +231,24 @@ class SubmoduleGuardianTest(unittest.TestCase):
         # Verify that the comment body is correctly rendered and passed
         render_call = guardian.discussion_template.render.call_args.kwargs
         self.assertEqual(render_call['status_lines'], status_lines)
+
+    @patch('sys.exit')
+    @patch('mlx.submodule_guardian.submodule_guardian.SubmoduleGuardian._post_or_update_discussion')
+    def test_report_no_discussion_and_fail(self, mock_post_discussion, mock_sys_exit):
+        """Test report does not post discussion but fails pipeline when specified."""
+        guardian = self._create_guardian(fail_pipeline=True, post_discussion=False)
+        guardian.resolved = False  # Simulate a warning
+        status_lines = [":warning: A warning message"]
+
+        with self.assertLogs('submodule-guardian', level='WARNING') as cm:
+            guardian.report(status_lines)
+
+            # Assert that no discussion was posted
+            mock_post_discussion.assert_not_called()
+            # Assert that the pipeline failed
+            mock_sys_exit.assert_called_once_with(1)
+            # Assert the correct log message was shown
+            self.assertIn("Warnings detected. Discussion not posted due to --no-post-discussion flag.", cm.output[0])
 
     @patch('mlx.submodule_guardian.submodule_guardian.logger')
     def test_report_dry_run(self, mock_logger):
@@ -346,7 +364,7 @@ class MainAndHelperFunctionTest(unittest.TestCase):
         mock_parse_args.return_value = argparse.Namespace(
             project=None, mr_iid=None, branch=None, fail_pipeline=True,
             always_check=True, allow_tags=False, only_latest_tag=True,
-            verbose=True, debug=False
+            verbose=True, debug=False, post_discussion=True
         )
         mock_getenv.side_effect = lambda key, default=None: {
             'CI_PROJECT_PATH': 'group/project',
@@ -367,7 +385,8 @@ class MainAndHelperFunctionTest(unittest.TestCase):
             allow_tags=False,
             only_latest_tag=True,
             mr_iid='123',
-            branch='feature-branch'
+            branch='feature-branch',
+            post_discussion=True
         )
         mock_guardian_cls.return_value.run.assert_called_once()
 
@@ -377,7 +396,8 @@ class MainAndHelperFunctionTest(unittest.TestCase):
         """Test main function exits with code 1 if project ID is missing."""
         mock_parse_args.return_value = argparse.Namespace(
             project=None, mr_iid='123', branch='b', debug=False, verbose=False,
-            fail_pipeline=False, always_check=False, allow_tags=False, only_latest_tag=False
+            fail_pipeline=False, always_check=False, allow_tags=False, only_latest_tag=False,
+            post_discussion=True
         )
         # Mock os.getenv to return None for project-related vars
         with patch('mlx.submodule_guardian.submodule_guardian.os.getenv') as mock_getenv:
@@ -396,7 +416,8 @@ class MainAndHelperFunctionTest(unittest.TestCase):
         """Test main function exits with code 1 if both MR IID and branch are missing."""
         mock_parse_args.return_value = argparse.Namespace(
             project='p', mr_iid=None, branch=None, debug=False, verbose=False,  # project is provided
-            fail_pipeline=False, always_check=False, allow_tags=False, only_latest_tag=False
+            fail_pipeline=False, always_check=False, allow_tags=False, only_latest_tag=False,
+            post_discussion=True
         )
         # Ensure CI variables are also None
         with patch('mlx.submodule_guardian.submodule_guardian.os.getenv') as mock_getenv, \
@@ -418,7 +439,7 @@ class MainAndHelperFunctionTest(unittest.TestCase):
         mock_parse_args.return_value = argparse.Namespace(
             project='p', mr_iid='1', branch='b', fail_pipeline=False,
             always_check=False, allow_tags=False, only_latest_tag=False,
-            verbose=False, debug=True
+            verbose=False, debug=True, post_discussion=True
         )
         # Mock os.getenv to return necessary values for the guardian constructor
         with patch.dict(os.environ, {
@@ -718,7 +739,8 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
                 always_check=True,
                 dry_run=dry_run,
                 allow_tags=allow_tags,
-                only_latest_tag=only_latest_tag
+                only_latest_tag=only_latest_tag,
+                post_discussion=True
             )
 
     def test_determine_mr_iid_single_mr(self):
@@ -744,7 +766,8 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
                     always_check=True,
                     dry_run=False,
                     allow_tags=False,
-                    only_latest_tag=False
+                    only_latest_tag=False,
+                    post_discussion=True
                 )
             self.assertIn('PRIVATE_TOKEN not found', str(cm.exception))
 
@@ -764,7 +787,8 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
                 always_check=True,
                 dry_run=False,
                 allow_tags=False,
-                only_latest_tag=False
+                only_latest_tag=False,
+                post_discussion=True
             )
             # Verify Gitlab was called with https:// prefix
             mock_gitlab_class.assert_called_once()
@@ -972,6 +996,7 @@ class ParseArgsTest(unittest.TestCase):
             '--allow-tags',
             '--only-latest-tag',
             '--verbose',
+            '--no-post-discussion',
             '--debug'
         ]
 
@@ -987,6 +1012,7 @@ class ParseArgsTest(unittest.TestCase):
             self.assertTrue(args.allow_tags)
             self.assertTrue(args.only_latest_tag)
             self.assertTrue(args.verbose)
+            self.assertFalse(args.post_discussion)
             self.assertTrue(args.debug)
 
     def test_parse_args_short_options(self):

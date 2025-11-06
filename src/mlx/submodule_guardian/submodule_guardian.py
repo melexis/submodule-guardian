@@ -106,12 +106,13 @@ class SubmoduleGuardian:
     """
 
     def __init__(self, project_identifier: str, fail_pipeline: bool,
-                 always_check: bool, dry_run: bool, allow_tags: bool, only_latest_tag: bool,
+                 always_check: bool, dry_run: bool, allow_tags: bool, only_latest_tag: bool, post_discussion: bool,
                  mr_iid: Optional[str] = None,
                  branch: Optional[str] = None):
         self.project_identifier = project_identifier
         self.branch = branch
         self.fail_pipeline = fail_pipeline
+        self.post_discussion = post_discussion
         self.always_check = always_check
         self.dry_run = dry_run
         self.allow_tags = allow_tags
@@ -271,28 +272,37 @@ class SubmoduleGuardian:
             logger.warning("Warnings detected. In a CI run, this would create a discussion or fail the pipeline.")
             return
 
+        if self.post_discussion:
+            # Post to MR
+            title = "Submodule Status Check"
+            search_string = f'# {title}'
+            extra_line = ('One or more submodules require attention.' if not self.resolved
+                          else 'All submodules are in a good state.')
+            comment_body = self.discussion_template.render(
+                title=title,
+                status_lines=status_lines,
+                extra_line=extra_line,
+                job_url=os.getenv('CI_JOB_URL', '#')
+            )
+
+            self._post_or_update_discussion(comment=str(comment_body), search_string=search_string)
+            logger.info("Posted discussion.")
+
+        if not self.resolved:
+            if not self.fail_pipeline:
+                logger.warning("Warnings detected. No failing pipeline or discussion post can result in unseen "
+                               "warnings.")
+            else:
+                logger.warning("Warnings detected. Discussion not posted due to --no-post-discussion flag.")
+        else:
+            logger.info("Success: All submodules are in a good state.")
+
         if self.fail_pipeline:
             if not self.resolved:
                 logger.error("Action required: One or more submodules are behind their default branch or tags.")
                 sys.exit(1)
             else:
                 logger.info("Success: All submodules are in a good state.")
-                sys.exit(0)
-
-        # Default behavior: Post to MR
-        title = "Submodule Status Check"
-        search_string = f'# {title}'
-        extra_line = ('One or more submodules require attention.' if not self.resolved
-                      else 'All submodules are in a good state.')
-        comment_body = self.discussion_template.render(
-            title=title,
-            status_lines=status_lines,
-            extra_line=extra_line,
-            job_url=os.getenv('CI_JOB_URL', '#')
-        )
-
-        self._post_or_update_discussion(comment=str(comment_body), search_string=search_string,)
-        logger.warning("Posted discussion.")
 
     def _post_or_update_discussion(self, comment: str, search_string: str) -> Optional[str]:
         """
@@ -445,6 +455,8 @@ def parse_args():
                         help='Always perform the check, even if no submodules were modified in the MR.')
     parser.add_argument('--allow-tags', action='store_true',
                         help='Allow submodules to be on tags.')
+    parser.add_argument('--no-post-discussion', dest='post_discussion', action='store_false',
+                        help='Do not post a discussion on the merge request.')
     parser.add_argument('--only-latest-tag', action='store_true',
                         help='If on tag, only consider the latest tag as up-to-date.')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable INFO level logging.')
@@ -474,9 +486,6 @@ def main():
     elif args.verbose:
         log_level = logging.INFO
 
-    # Configure logging with force=True (Python 3.8+) to replace existing handlers
-    # This is cleaner than manually clearing and works correctly with assertLogs in tests
-    # because assertLogs adds its handler after basicConfig is called
     logging.basicConfig(
         level=log_level,
         format='%(name)s: %(message)s',
@@ -504,7 +513,8 @@ def main():
         guardian = SubmoduleGuardian(project_identifier=project_identifier,
                                      fail_pipeline=args.fail_pipeline, always_check=args.always_check,
                                      dry_run=dry_run, allow_tags=args.allow_tags,
-                                     only_latest_tag=args.only_latest_tag, mr_iid=mr_iid, branch=branch)
+                                     only_latest_tag=args.only_latest_tag, mr_iid=mr_iid, branch=branch,
+                                     post_discussion=args.post_discussion)
         guardian.run()
     except Exception as e:
         logger.exception(f"An unexpected error occurred: {e}")

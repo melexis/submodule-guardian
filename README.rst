@@ -57,20 +57,23 @@ Usage
 
     submodule-guardian -h
     usage: submodule-guardian [-h] [--version] [-p PROJECT] [-m MR_IID] [-b BRANCH] [--fail-pipeline] [--always-check]
-                            [--allow-tags] [--only-latest-tag] [-v] [-d]
+                            [--allow-tags] [--no-post-discussion] [--only-latest-tag] [-v] [-d]
 
     Check submodule status and report to a GitLab MR.
 
-    options:
+    optional arguments:
     -h, --help            show this help message and exit
     --version             show program's version number and exit
-    -p, --project PROJECT
+    -p PROJECT, --project PROJECT
                             The ID or path of the GitLab project (or CI_PROJECT_PATH).
-    -m, --mr-iid MR_IID   The IID of the merge request (or CI_MERGE_REQUEST_IID).
-    -b, --branch BRANCH   Current branch name (default: current git branch)
+    -m MR_IID, --mr-iid MR_IID
+                            The IID of the merge request (or CI_MERGE_REQUEST_IID).
+    -b BRANCH, --branch BRANCH
+                            Current branch name (default: current git branch)
     --fail-pipeline       Fail the pipeline on warnings instead of creating an MR discussion.
     --always-check        Always perform the check, even if no submodules were modified in the MR.
     --allow-tags          Allow submodules to be on tags.
+    --no-post-discussion  Do not post a discussion on the merge request.
     --only-latest-tag     If on tag, only consider the latest tag as up-to-date.
     -v, --verbose         Enable INFO level logging.
     -d, --debug           Enable DEBUG level logging.
