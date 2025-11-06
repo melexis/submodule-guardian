@@ -1,0 +1,15 @@
+graft src
+
+include README.rst
+include LICENSE
+include requirements.txt
+
+recursive-include tests *.py
+
+exclude src/mlx/submodule_guardian/_version.py
+exclude *.yml
+exclude .gitignore
+exclude tox.ini
+exclude MANIFEST.in
+
+recursive-exclude .github *
