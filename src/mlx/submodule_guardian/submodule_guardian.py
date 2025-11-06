@@ -102,7 +102,7 @@ class Submodule:
 
 class SubmoduleGuardian:
     """
-    Checks submodule status and reports it to a GitLab Merge Request.
+    Checks submodule status and reports it.
     """
 
     def __init__(self, project_identifier: str, fail_pipeline: bool,
@@ -183,6 +183,12 @@ class SubmoduleGuardian:
     def check_submodules(self, submodules_to_check: List[Submodule]) -> List[str]:
         """
         Iterates through a given list of submodules and checks their status.
+
+        Args:
+            submodules_to_check (List[Submodule]): A list of Submodule objects to check.
+
+        Returns:
+            List[str]: A list of formatted status strings for each submodule.
         """
         logger.info(f"Checking status for {len(submodules_to_check)} submodule(s)...")
         status_lines = []
@@ -198,7 +204,14 @@ class SubmoduleGuardian:
         return status_lines
 
     def _format_submodule_status(self, submodule: Submodule) -> str:
-        """Formats the status of a single submodule into a human-readable string."""
+        """Formats the status of a single submodule into a human-readable string.
+
+        Args:
+            submodule (Submodule): The submodule to check.
+
+        Returns:
+            str: A formatted string indicating the status of the submodule.
+        """
         submodule_link = f"[link={submodule.url}]{submodule.path_in_project}[/link]"
         gl_submodule_link = f"[{submodule.path_in_project}]({submodule.url})"
         status_template = ""
@@ -267,6 +280,9 @@ class SubmoduleGuardian:
     def report(self, status_lines: List[str]):
         """
         Reports the submodule status to the merge request or fails the pipeline.
+
+        Args:
+            status_lines (List[str]): A list of formatted status strings for each submodule.
         """
         if self.dry_run and not self.resolved:
             logger.warning("Warnings detected. In a CI run, this would create a discussion or fail the pipeline.")
