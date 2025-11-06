@@ -17,7 +17,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -25,7 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 keywords = ["Gitlab CI", "submodules", "merge request", "discussion", "resolved", "unresolved", "fail pipeline"]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "python-gitlab>=3.7.0",
     "python-decouple>=3.4,<4.0",
