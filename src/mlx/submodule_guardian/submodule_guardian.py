@@ -318,9 +318,10 @@ class SubmoduleGuardian:
 
             comment_url = self._post_or_update_discussion(comment=str(comment_body), search_string=search_string)
             if not self.resolved:
-                logger.warning(f"Warnings detected. Discussion posted. {comment_url}")
+                logger.warning(f"Warnings detected. [link={comment_url}]Discussion posted.[/link]",
+                               extra={"markup": True})
             else:
-                logger.info(f"Posted discussion. {comment_url}")
+                logger.info(f"[link={comment_url}]Discussion posted.[/link]")
         elif not self.resolved:
             if not self.fail_pipeline:
                 logger.warning("Warnings detected. No failing pipeline or discussion post can result in unseen "
