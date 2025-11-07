@@ -60,7 +60,7 @@ class SubmoduleGuardianTest(unittest.TestCase):
         patch.stopall()
 
     def _create_guardian(self, allow_tags=False, only_latest_tag=False, fail_pipeline=False, dry_run=False,
-                         post_discussion=True):
+                         post_discussion=True, fix=False):
         """Helper to create a SubmoduleGuardian instance with mocked GitLab."""
         # We patch 'config' where it is looked up by the SubmoduleGuardian constructor.
         # We don't need to patch Gitlab here as it's already patched in setUp.
@@ -74,7 +74,8 @@ class SubmoduleGuardianTest(unittest.TestCase):
                 dry_run=dry_run,
                 allow_tags=allow_tags,
                 only_latest_tag=only_latest_tag,
-                post_discussion=post_discussion
+                post_discussion=post_discussion,
+                fix=fix
             )
 
     def _reset_submodule_mocks(self):
@@ -97,13 +98,16 @@ class SubmoduleGuardianTest(unittest.TestCase):
 
     def test_format_status_behind_default_branch(self):
         """Test status when submodule is behind the default branch."""
-        guardian = self._create_guardian()
+        guardian = self._create_guardian(fix=True)
+        guardian._fix_submodule = MagicMock()
         self._reset_submodule_mocks()
         self.mock_submodule.is_on_default_branch.return_value = True
 
         status = guardian._format_submodule_status(self.mock_submodule)
         self.assertIn(":warning:", status)
         self.assertIn("is behind its latest default branch", status)
+        # Verify that the fix method was called
+        guardian._fix_submodule.assert_called_once_with(self.mock_submodule, 'default_branch')
 
     def test_format_status_on_different_branch(self):
         """Test status when submodule is on a different, non-default branch."""
@@ -151,7 +155,8 @@ class SubmoduleGuardianTest(unittest.TestCase):
 
     def test_format_status_on_old_tag(self):
         """Test status when on an old tag and only latest is allowed."""
-        guardian = self._create_guardian(allow_tags=True, only_latest_tag=True)
+        guardian = self._create_guardian(allow_tags=True, only_latest_tag=True, fix=True)
+        guardian._fix_submodule = MagicMock()
         self._reset_submodule_mocks()
         self.mock_submodule.is_on_tag.return_value = 'v1.0.0'
         self.mock_submodule.is_on_latest_tag.return_value = False  # Not on latest
@@ -159,6 +164,35 @@ class SubmoduleGuardianTest(unittest.TestCase):
         status = guardian._format_submodule_status(self.mock_submodule)
         self.assertIn(":warning:", status)
         self.assertIn("is on tag `v1.0.0`, but a newer tag `v1.1.0` is available.", status)
+        # Verify that the fix method was called
+        guardian._fix_submodule.assert_called_once_with(self.mock_submodule, 'latest_tag')
+
+    @patch('mlx.submodule_guardian.submodule_guardian.subprocess.run')
+    def test_fix_submodule_calls_subprocess(self, mock_subprocess_run):
+        """Test that _fix_submodule calls the correct git commands."""
+        guardian = self._create_guardian(fix=True)
+        path = self.mock_submodule.path_in_project
+        default_branch = self.mock_submodule.sub_project.default_branch
+
+        # Test fixing to default branch
+        guardian._fix_submodule(self.mock_submodule, 'default_branch')
+
+        # Check calls for default_branch fix
+        expected_calls = [
+            unittest.mock.call(['git', '-C', path, 'fetch', '--tags', '--force'], check=True),
+            unittest.mock.call(['git', '-C', path, 'checkout', default_branch], check=True),
+            unittest.mock.call(['git', '-C', path, 'pull', 'origin', default_branch], check=True),
+            unittest.mock.call(['git', 'add', path], check=True)
+        ]
+        mock_subprocess_run.assert_has_calls(expected_calls, any_order=False)
+
+        # Reset mock and test fixing to latest tag
+        mock_subprocess_run.reset_mock()
+        latest_tag_name = self.mock_latest_tag.name
+        guardian._fix_submodule(self.mock_submodule, 'latest_tag')
+        self.assertEqual(mock_subprocess_run.call_count, 4)
+        # Check that checkout is called with the tag name
+        self.assertIn(latest_tag_name, mock_subprocess_run.call_args_list[1].args[0])
 
     def test_format_status_no_default_branch(self):
         """Test status when the default branch cannot be determined."""
@@ -363,13 +397,14 @@ class MainAndHelperFunctionTest(unittest.TestCase):
         """Test the main function with typical CI environment variables."""
         mock_parse_args.return_value = argparse.Namespace(
             project=None, mr_iid=None, branch=None, fail_pipeline=True,
-            always_check=True, allow_tags=False, only_latest_tag=True,
+            always_check=True, allow_tags=False, only_latest_tag=True, fix=False,
             verbose=True, debug=False, post_discussion=True
         )
         mock_getenv.side_effect = lambda key, default=None: {
             'CI_PROJECT_PATH': 'group/project',
             'CI_MERGE_REQUEST_IID': '123',
             'CI_COMMIT_BRANCH': 'feature-branch',
+            'PRIVATE_TOKEN': 'dummy-token',
             'CI_SERVER_HOST': 'gitlab.example.com',
             'CI_PROJECT_ID': '42'
         }.get(key, default)
@@ -385,7 +420,41 @@ class MainAndHelperFunctionTest(unittest.TestCase):
             allow_tags=False,
             only_latest_tag=True,
             mr_iid='123',
+            fix=False,
             branch='feature-branch',
+            post_discussion=True
+        )
+        mock_guardian_cls.return_value.run.assert_called_once()
+
+    @patch('mlx.submodule_guardian.submodule_guardian.get_current_branch', return_value='my-branch')
+    @patch('mlx.submodule_guardian.submodule_guardian.os.getenv')
+    @patch('mlx.submodule_guardian.submodule_guardian.SubmoduleGuardian', autospec=True)
+    @patch('mlx.submodule_guardian.submodule_guardian.parse_args')
+    def test_main_local_run_with_fix(self, mock_parse_args, mock_guardian_cls, mock_getenv, mock_get_branch):
+        """Test the main function for a local run with the --fix flag."""
+        mock_parse_args.return_value = argparse.Namespace(
+            project='group/project', mr_iid='123', branch=None, fail_pipeline=False,
+            always_check=True, allow_tags=True, only_latest_tag=True, fix=True,
+            verbose=False, debug=False, post_discussion=True
+        )
+        # Simulate a local run (no CI variables)
+        mock_getenv.side_effect = lambda key, default=None: {
+            'PRIVATE_TOKEN': 'dummy-token',
+            'CI_SERVER_HOST': 'gitlab.example.com',
+        }.get(key, default)
+
+        main()
+
+        mock_guardian_cls.assert_called_once_with(
+            project_identifier='group/project',
+            fail_pipeline=False,
+            always_check=True,
+            dry_run=True,  # Should be True for local run
+            allow_tags=True,
+            only_latest_tag=True,
+            mr_iid='123',
+            fix=True,  # Should be passed as True
+            branch='my-branch',
             post_discussion=True
         )
         mock_guardian_cls.return_value.run.assert_called_once()
@@ -395,7 +464,7 @@ class MainAndHelperFunctionTest(unittest.TestCase):
     def test_main_missing_project_id(self, mock_parse_args, mock_sys_exit):
         """Test main function exits with code 1 if project ID is missing."""
         mock_parse_args.return_value = argparse.Namespace(
-            project=None, mr_iid='123', branch='b', debug=False, verbose=False,
+            project=None, mr_iid='123', branch='b', debug=False, verbose=False, fix=False,
             fail_pipeline=False, always_check=False, allow_tags=False, only_latest_tag=False,
             post_discussion=True
         )
@@ -415,7 +484,7 @@ class MainAndHelperFunctionTest(unittest.TestCase):
     def test_main_missing_mr_and_branch(self, mock_parse_args, mock_guardian_cls, mock_sys_exit):
         """Test main function exits with code 1 if both MR IID and branch are missing."""
         mock_parse_args.return_value = argparse.Namespace(
-            project='p', mr_iid=None, branch=None, debug=False, verbose=False,  # project is provided
+            project='p', mr_iid=None, branch=None, debug=False, verbose=False, fix=False,  # project is provided
             fail_pipeline=False, always_check=False, allow_tags=False, only_latest_tag=False,
             post_discussion=True
         )
@@ -438,7 +507,7 @@ class MainAndHelperFunctionTest(unittest.TestCase):
         """Test that main catches exceptions from the guardian and exits."""
         mock_parse_args.return_value = argparse.Namespace(
             project='p', mr_iid='1', branch='b', fail_pipeline=False,
-            always_check=False, allow_tags=False, only_latest_tag=False,
+            always_check=False, allow_tags=False, only_latest_tag=False, fix=False,
             verbose=False, debug=True, post_discussion=True
         )
         # Mock os.getenv to return necessary values for the guardian constructor
@@ -770,7 +839,7 @@ class SubmoduleTest(unittest.TestCase):
 class SubmoduleGuardianAdditionalTest(unittest.TestCase):
 
     def setUp(self):
-        """Set up mock objects for GitLab and Subproject."""
+        """Set up mock objects for GitLab and Subproject.""" # noqa
         self.config_patch = patch('mlx.submodule_guardian.submodule_guardian.config')
         self.mock_gitlab = MagicMock()
         self.mock_project = MagicMock()
@@ -787,7 +856,7 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
         patch.stopall()
 
     def _create_guardian(self, allow_tags=False, only_latest_tag=False, fail_pipeline=False, dry_run=False,
-                         post_discussion=True):
+                         post_discussion=True, fix=False):
         """Helper to create a SubmoduleGuardian instance with mocked GitLab."""
         with patch('mlx.submodule_guardian.submodule_guardian.config') as mock_config:
             mock_config.side_effect = lambda key, default=None: 'dummy_token' if key == 'PRIVATE_TOKEN' else default
@@ -799,7 +868,8 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
                 dry_run=dry_run,
                 allow_tags=allow_tags,
                 only_latest_tag=only_latest_tag,
-                post_discussion=post_discussion
+                post_discussion=post_discussion,
+                fix=fix
             )
 
     def test_determine_mr_iid_single_mr(self):
@@ -826,7 +896,8 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
                     dry_run=False,
                     allow_tags=False,
                     only_latest_tag=False,
-                    post_discussion=True
+                    post_discussion=True,
+                    fix=False
                 )
             self.assertIn('PRIVATE_TOKEN not found', str(cm.exception))
 
@@ -847,7 +918,8 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
                 dry_run=False,
                 allow_tags=False,
                 only_latest_tag=False,
-                post_discussion=True
+                post_discussion=True,
+                fix=False
             )
             # Verify Gitlab was called with https:// prefix
             mock_gitlab_class.assert_called_once()
@@ -1070,6 +1142,7 @@ class ParseArgsTest(unittest.TestCase):
             '--allow-tags',
             '--only-latest-tag',
             '--verbose',
+            '--fix',
             '--no-post-discussion',
             '--debug'
         ]
@@ -1086,6 +1159,7 @@ class ParseArgsTest(unittest.TestCase):
             self.assertTrue(args.allow_tags)
             self.assertTrue(args.only_latest_tag)
             self.assertTrue(args.verbose)
+            self.assertTrue(args.fix)
             self.assertFalse(args.post_discussion)
             self.assertTrue(args.debug)
 

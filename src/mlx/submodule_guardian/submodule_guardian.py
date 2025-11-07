@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import sys
+import subprocess
 from posixpath import normpath, join
 from pathlib import Path
 from typing import Optional, List
@@ -112,7 +113,7 @@ class SubmoduleGuardian:
 
     def __init__(self, project_identifier: str, fail_pipeline: bool,
                  always_check: bool, dry_run: bool, allow_tags: bool, only_latest_tag: bool, post_discussion: bool,
-                 mr_iid: Optional[str] = None,
+                 fix: bool, mr_iid: Optional[str] = None,
                  branch: Optional[str] = None):
         self.project_identifier = project_identifier
         self.branch = branch
@@ -122,6 +123,7 @@ class SubmoduleGuardian:
         self.dry_run = dry_run
         self.allow_tags = allow_tags
         self.only_latest_tag = only_latest_tag
+        self.fix = fix
 
         self._private_token = config('PRIVATE_TOKEN', default=None)
         self._setup_gitlab()
@@ -247,6 +249,8 @@ class SubmoduleGuardian:
                                    f"{submodule.latest_tag.name if submodule.latest_tag else 'unknown'}` is available.")
                 console.print(status_template.format(submodule_link=submodule_link), markup=True, highlight=False,
                               style="warning")
+                if self.fix:
+                    self._fix_submodule(submodule, 'latest_tag')
                 return status_template.format(submodule_link=gl_submodule_link)
             elif self.allow_tags:
                 status_template = f":white_check_mark: Submodule {{submodule_link}} is on tag `{tag_name}`."
@@ -276,6 +280,8 @@ class SubmoduleGuardian:
                                f"`{submodule.sub_project.default_branch}`.")
             console.print(status_template.format(submodule_link=submodule_link), markup=True, highlight=False,
                           style="warning")
+            if self.fix:
+                self._fix_submodule(submodule, 'default_branch')
             return status_template.format(submodule_link=gl_submodule_link)
 
         # Priority 4: Other cases
@@ -286,6 +292,36 @@ class SubmoduleGuardian:
         console.print(status_template.format(submodule_link=submodule_link), markup=True, highlight=False,
                       style="danger")
         return status_template.format(submodule_link=gl_submodule_link)
+
+    def _fix_submodule(self, submodule: Submodule, fix_type: str):
+        """Updates a submodule to the latest tag or default branch.
+
+        Args:
+            submodule (Submodule): The submodule to fix.
+            fix_type (str): The type of fix to perform ('latest_tag' or 'default_branch').
+        """
+        path = submodule.path_in_project
+        logger.info(f"Attempting to fix submodule at '{path}'...")
+
+        if fix_type == 'latest_tag' and submodule.latest_tag:
+            target = submodule.latest_tag.name
+            logger.info(f"Checking out latest tag '{target}' for submodule '{path}'.")
+        elif fix_type == 'default_branch':
+            target = submodule.sub_project.default_branch
+            logger.info(f"Checking out latest on default branch '{target}' for submodule '{path}'.")
+        else:
+            logger.warning(f"Unknown fix type '{fix_type}' or missing information for submodule '{path}'.")
+            return
+
+        try:
+            subprocess.run(['git', '-C', path, 'fetch', '--tags', '--force'], check=True)
+            subprocess.run(['git', '-C', path, 'checkout', target], check=True)
+            subprocess.run(['git', '-C', path, 'pull', 'origin', target], check=True)
+            subprocess.run(['git', 'add', path], check=True)
+            console.print(f":wrench: Submodule '{path}' has been checked out to '{target}'. "
+                          f"Please review, commit, and push the changes.", style="bold yellow")
+        except (subprocess.SubprocessError, FileNotFoundError) as e:
+            logger.error(f"Failed to fix submodule '{path}': {e}")
 
     def report(self, status_lines: List[str]):
         """
@@ -495,6 +531,8 @@ def parse_args():
                         help='Do not post a discussion on the merge request.')
     parser.add_argument('--only-latest-tag', action='store_true',
                         help='If on tag, only consider the latest tag as up-to-date.')
+    parser.add_argument('--fix', action='store_true',
+                        help='Automatically checkout submodules to fix warnings (e.g., to latest tag or branch head).')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable INFO level logging.')
     parser.add_argument('-d', '--debug', action='store_true', help='Enable DEBUG level logging.')
     return parser.parse_args()
@@ -532,6 +570,9 @@ def main():
     if not os.getenv('CI_PROJECT_ID') and not os.getenv('CI_PROJECT_PATH'):
         logger.info("Not running in CI environment; enabling dry-run mode.")
         dry_run = True
+    if not dry_run and args.fix:
+        logger.error("--fix can only be used locally in dry run mode")
+        sys.exit(1)
 
     project_identifier = args.project or os.getenv('CI_PROJECT_ID') or os.getenv('CI_PROJECT_PATH')
     branch = args.branch or os.getenv('CI_COMMIT_BRANCH') or get_current_branch()
@@ -549,7 +590,7 @@ def main():
         guardian = SubmoduleGuardian(project_identifier=project_identifier,
                                      fail_pipeline=args.fail_pipeline, always_check=args.always_check,
                                      dry_run=dry_run, allow_tags=args.allow_tags,
-                                     only_latest_tag=args.only_latest_tag, mr_iid=mr_iid, branch=branch,
+                                     only_latest_tag=args.only_latest_tag, fix=args.fix, mr_iid=mr_iid, branch=branch,
                                      post_discussion=args.post_discussion)
         guardian.run()
     except Exception as e:
