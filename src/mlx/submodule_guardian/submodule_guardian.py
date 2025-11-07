@@ -415,30 +415,31 @@ class SubmoduleGuardian:
         """
         Reads the .gitmodules file from the project to identify submodules.
         """
-        submodule_path = ""
-        try:
-            # Ensure we have a branch reference - required by GitLab API
-            ref = self.branch
-            if not ref:
-                logger.warning("No branch specified, cannot read .gitmodules file.")
-                return
-            gitmodules_file = self.project.files.get('.gitmodules', ref=ref)
-            gitmodules_content = gitmodules_file.decode().decode('utf-8')
-            logger.info("Successfully read .gitmodules file.")
-            config = configparser.ConfigParser()
-            config.optionxform = str
-            config.read_string(gitmodules_content)
-            name_regex = r'submodule "([a-zA-Z0-9\.\-\/_]+)"'
-            for section in config.sections():
-                if re.match(name_regex, section):
-                    submodule_path = config[section]['path']
-                    submodule_url = config[section]['url']
-                    submodule = Submodule.from_gitmodules(self.gitlab, self.project, self.branch, submodule_path,
-                                                          submodule_url)
+
+        ref = self.branch
+        if not ref:
+            logger.error("No branch specified, cannot read .gitmodules file.")
+            sys.exit(1)
+
+        gitmodules_file = self.project.files.get('.gitmodules', ref=ref)
+        gitmodules_content = gitmodules_file.decode().decode('utf-8')
+        logger.info("Successfully read .gitmodules file.")
+
+        config = configparser.ConfigParser()
+        config.optionxform = str
+        config.read_string(gitmodules_content)
+        name_regex = r'submodule "([a-zA-Z0-9\.\-\/_]+)"'
+        for section in config.sections():
+            if re.match(name_regex, section):
+                submodule_path = config[section]['path']
+                submodule_url = config[section]['url']
+                try:
+                    submodule = Submodule.from_gitmodules(self.gitlab, self.project, self.branch, submodule_path, submodule_url)
                     self.submodules.append(submodule)
                     logger.info(f"Found submodule: {submodule_path}")
-        except Exception as e:
-            logger.error(f"Failed to read .gitmodules file: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to process submodule '{submodule_path}' from URL '{submodule_url}': {e}")
+                    sys.exit(1)
 
     def run(self):
         """
