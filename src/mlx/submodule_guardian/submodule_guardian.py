@@ -284,8 +284,13 @@ class SubmoduleGuardian:
         Args:
             status_lines (List[str]): A list of formatted status strings for each submodule.
         """
-        if self.dry_run and not self.resolved:
-            logger.warning("Warnings detected. In a CI run, this would create a discussion or fail the pipeline.")
+        if self.dry_run:
+            if not self.resolved:
+                logger.warning("Warnings detected. In a CI run, this would create an unresolved discussion or fail the "
+                               "pipeline.")
+            else:
+                logger.info("Success: All submodules are in a good state. In a CI run, this would create a resolved "
+                            "discussion.")
             return
 
         if self.post_discussion:
