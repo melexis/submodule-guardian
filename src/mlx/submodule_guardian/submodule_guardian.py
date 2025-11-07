@@ -46,23 +46,28 @@ console = Console(theme=custom_theme)
 @dataclass
 class Submodule:
     sub_project: Project
-    commit_id: str
+    commit_id: Optional[str] = ''
     path_in_project: Optional[str] = None
+    error: Optional[str] = ''
 
     @classmethod
     def from_gitmodules(cls, gl, project, branch, path_in_project, url) -> 'Submodule':
         rel_path = url[:-4] if url.endswith('.git') else url
-        rel_path = rel_path.lstrip('/')
-        path = normpath(join(project.path_with_namespace, rel_path))
+        if url_match := re.match(r'^(?:https://|git@)([\w\.-]+)(?:\/|:)(.+)', rel_path):
+            domain = url_match.group(1)
+            path = url_match.group(2).rstrip('/')
+            if domain not in gl.url:
+                err = (f"Submodule {path_in_project} is skipped due to different domain ( {domain} ) than the project "
+                       f"( {gl.url} ).")
+                logger.error(err)
+                return cls(sub_project=None, commit_id=None, path_in_project=path_in_project, error=err)
+        else:
+            path = normpath(join(project.path_with_namespace, rel_path))
         sub_project = gl.projects.get(path)
         submodule_dir = project.files.get(path_in_project, ref=branch)
         commit_id = submodule_dir.blob_id
 
-        return cls(
-            sub_project=sub_project,
-            commit_id=commit_id,
-            path_in_project=path_in_project
-        )
+        return cls(sub_project=sub_project, commit_id=commit_id, path_in_project=path_in_project)
 
     @property
     def latest_tag(self):
@@ -198,6 +203,11 @@ class SubmoduleGuardian:
             return []
 
         for submodule in submodules_to_check:
+            if submodule.error:
+                status = f":warning: {submodule.error}"
+                console.print(status, markup=True, highlight=False, style="warning")
+                status_lines.append(status)
+                continue
             status = self._format_submodule_status(submodule)
             status_lines.append(status)
 
@@ -434,7 +444,8 @@ class SubmoduleGuardian:
                 submodule_path = config[section]['path']
                 submodule_url = config[section]['url']
                 try:
-                    submodule = Submodule.from_gitmodules(self.gitlab, self.project, self.branch, submodule_path, submodule_url)
+                    submodule = Submodule.from_gitmodules(self.gitlab, self.project, self.branch, submodule_path,
+                                                          submodule_url)
                     self.submodules.append(submodule)
                     logger.info(f"Found submodule: {submodule_path}")
                 except Exception as e:

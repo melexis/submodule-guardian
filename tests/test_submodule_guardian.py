@@ -259,8 +259,8 @@ class SubmoduleGuardianTest(unittest.TestCase):
 
         guardian.report(status_lines)
 
-        mock_logger.warning.assert_called_with("Warnings detected. In a CI run, this would create a discussion or "
-                                               "fail the pipeline.")
+        mock_logger.warning.assert_called_with("Warnings detected. In a CI run, this would create an unresolved "
+                                               "discussion or fail the pipeline.")
 
     # --- Method-specific tests for coverage ---
 
@@ -519,6 +519,64 @@ class SubmoduleTest(unittest.TestCase):
 
         self.assertEqual(submodule.commit_id, 'commit_456')
 
+    @patch('mlx.submodule_guardian.submodule_guardian.logger')
+    def test_from_gitmodules_different_domain(self, mock_logger):
+        """Test Submodule.from_gitmodules when submodule URL is from a different domain."""
+        self.mock_gitlab.url = 'https://gitlab.melexis.com'
+        mock_submodule_dir = MagicMock()
+        mock_submodule_dir.blob_id = 'commit_123'
+        self.mock_project.files.get.return_value = mock_submodule_dir
+
+        submodule = Submodule.from_gitmodules(
+            self.mock_gitlab, self.mock_project, 'main', 'path/to/sub', 'https://github.com/some/repo.git'
+        )
+
+        self.assertIsNone(submodule.sub_project)
+        self.assertIsNone(submodule.commit_id)
+        self.assertEqual(submodule.path_in_project, 'path/to/sub')
+        self.assertIn("Submodule path/to/sub is skipped due to different domain", submodule.error)
+        mock_logger.error.assert_called_once()
+
+    @patch('mlx.submodule_guardian.submodule_guardian.logger')
+    def test_from_gitmodules_invalid_url_format(self, mock_logger):
+        """
+        Test Submodule.from_gitmodules with an invalid URL format that doesn't match the regex.
+        The current implementation attempts to resolve it as an internal path.
+        """
+        self.mock_gitlab.url = 'https://gitlab.example.com'
+        self.mock_gitlab.projects.get.return_value = self.mock_sub_project
+        mock_submodule_dir = MagicMock()
+        mock_submodule_dir.blob_id = 'commit_123'
+        self.mock_project.files.get.return_value = mock_submodule_dir
+
+        submodule = Submodule.from_gitmodules(
+            self.mock_gitlab, self.mock_project, 'main', 'path/to/sub', 'invalid-url-format'
+        )
+
+        self.assertIsNotNone(submodule.sub_project)
+        self.assertEqual(submodule.commit_id, 'commit_123')
+        self.assertEqual(submodule.path_in_project, 'path/to/sub')
+        self.assertEqual(submodule.error, '')
+        mock_logger.error.assert_not_called()
+
+    @patch('mlx.submodule_guardian.submodule_guardian.logger')
+    def test_from_gitmodules_subproject_get_fails(self, mock_logger):
+        """
+        Test Submodule.from_gitmodules when gl.projects.get fails for the submodule project.
+        This exception is expected to be caught by the calling function (read_gitmodules).
+        """
+        self.mock_gitlab.url = 'https://gitlab.example.com'
+        self.mock_gitlab.projects.get.side_effect = Exception("Project not found")
+        mock_submodule_dir = MagicMock()
+        mock_submodule_dir.blob_id = 'commit_123'
+        self.mock_project.files.get.return_value = mock_submodule_dir
+
+        with self.assertRaisesRegex(Exception, "Project not found"):
+            Submodule.from_gitmodules(
+                self.mock_gitlab, self.mock_project, 'main', 'path/to/sub', 'https://gitlab.example.com/sub/project.git'
+            )
+        mock_logger.error.assert_not_called()
+
     def test_latest_tag_property_with_tags(self):
         """Test latest_tag property when tags exist."""
         mock_tag = MagicMock()
@@ -728,7 +786,8 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
         """Stop all patches."""
         patch.stopall()
 
-    def _create_guardian(self, allow_tags=False, only_latest_tag=False, fail_pipeline=False, dry_run=False):
+    def _create_guardian(self, allow_tags=False, only_latest_tag=False, fail_pipeline=False, dry_run=False,
+                         post_discussion=True):
         """Helper to create a SubmoduleGuardian instance with mocked GitLab."""
         with patch('mlx.submodule_guardian.submodule_guardian.config') as mock_config:
             mock_config.side_effect = lambda key, default=None: 'dummy_token' if key == 'PRIVATE_TOKEN' else default
@@ -740,7 +799,7 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
                 dry_run=dry_run,
                 allow_tags=allow_tags,
                 only_latest_tag=only_latest_tag,
-                post_discussion=True
+                post_discussion=post_discussion
             )
 
     def test_determine_mr_iid_single_mr(self):
@@ -929,17 +988,14 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
         self.assertTrue(any("Found submodule: path/to/sub1" in msg for msg in cm.output))
 
     @patch('mlx.submodule_guardian.submodule_guardian.configparser.ConfigParser')
-    def test_read_gitmodules_exception(self, mock_config_parser):
+    @patch('sys.exit')
+    def test_read_gitmodules_exception(self, mock_sys_exit, mock_config_parser):
         """Test read_gitmodules handles exceptions gracefully."""
         guardian = self._create_guardian()
         guardian.branch = 'main'
-
         guardian.project.files.get.side_effect = Exception("File not found")
-
-        with self.assertLogs('submodule-guardian', level='ERROR') as cm:
-            guardian.read_gitmodules()
-
-        self.assertTrue(any("Failed to read .gitmodules file" in msg for msg in cm.output))
+        with self.assertRaisesRegex(Exception, "File not found"):
+            guardian.run()
 
     def test_run_no_submodules_to_check(self):
         """Test run when no submodules are found to check."""
@@ -981,6 +1037,23 @@ class SubmoduleGuardianAdditionalTest(unittest.TestCase):
         # Check that it printed the non-dry-run header
         mock_console.print.assert_any_call("\n--- Submodule Status Report ---", style="bold")
 
+    @patch('mlx.submodule_guardian.submodule_guardian.logger')
+    @patch('mlx.submodule_guardian.submodule_guardian.SubmoduleGuardian._post_or_update_discussion')
+    def test_report_no_discussion_no_fail_with_warnings(self, mock_post_discussion, mock_logger):
+        """
+        Test report logs a warning when no discussion is posted, pipeline doesn't fail,
+        and warnings exist (new warning message).
+        """
+        guardian = self._create_guardian(fail_pipeline=False, post_discussion=False)
+        guardian.resolved = False  # Simulate a warning
+        status_lines = [":warning: A warning message"]
+
+        guardian.report(status_lines)
+
+        mock_post_discussion.assert_not_called()
+        mock_logger.warning.assert_called_with(
+            "Warnings detected. No failing pipeline or discussion post can result in unseen warnings."
+        )
 
 # --- Parse Args Tests ---
 class ParseArgsTest(unittest.TestCase):
