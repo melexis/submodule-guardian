@@ -15,6 +15,7 @@ Features
     - Can be configured to allow submodules to be on tags.
     - Can be configured to only consider the latest tag as up-to-date.
 - **Clear Reporting**: Provides a concise status report.
+- **Fix**: When `--fix` is used in dry run mode, submodule are checked out to the latest tag or default branch if possible.
 
 
 How it Works
@@ -57,7 +58,7 @@ Usage
 
     submodule-guardian -h
     usage: submodule-guardian [-h] [--version] [-p PROJECT] [-m MR_IID] [-b BRANCH] [--fail-pipeline] [--always-check]
-                            [--allow-tags] [--no-post-discussion] [--only-latest-tag] [-v] [-d]
+                            [--allow-tags] [--no-post-discussion] [--only-latest-tag] [--fix] [-v] [-d]
 
     Check submodule status and report to a GitLab MR.
 
@@ -75,6 +76,7 @@ Usage
     --allow-tags          Allow submodules to be on tags.
     --no-post-discussion  Do not post a discussion on the merge request.
     --only-latest-tag     If on tag, only consider the latest tag as up-to-date.
+    --fix                 Automatically checkout submodules to fix warnings (e.g., to latest tag or branch head).
     -v, --verbose         Enable INFO level logging.
     -d, --debug           Enable DEBUG level logging.
 
