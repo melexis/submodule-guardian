@@ -130,8 +130,13 @@ class SubmoduleGuardian:
 
         self.project = self.gitlab.projects.get(self.project_identifier)
         self.path_with_namespace = self.project.path_with_namespace
-        self.mr_iid = int(mr_iid) if mr_iid else self._determine_merge_request_iid()
-        self.mr = self.project.mergerequests.get(self.mr_iid)
+        try:
+            self.mr_iid = int(mr_iid) if mr_iid else self._determine_merge_request_iid()
+            self.mr = self.project.mergerequests.get(self.mr_iid)
+        except ValueError as e:
+            # Make it possible to check submodules in dry run without MR
+            if not (self.dry_run and self.always_check):
+                raise e
         self.current_user = self.gitlab.user
 
         # If branch is not provided but we have an MR, use the MR's source branch
