@@ -8,15 +8,15 @@ Python script that checks the status of submodules in a GitLab merge request.
 Features
 ========
 
-- **MR Integration**: Creates or updates a discussion thread in the MR when `--no-post-discussion` is not used.
+- **MR Integration**: Creates or updates a discussion thread in the MR when ``--no-post-discussion`` is not used.
 - **Configurable Behavior**:
     - Can be set to fail the pipeline instead of creating a discussion.
     - Can be configured to check every submodule, not just those that changed in the MR.
     - Can be configured to allow submodules to be on tags.
     - Can be configured to only consider the latest tag as up-to-date.
 - **Clear Reporting**: Provides a concise status report.
-- **Fix**: When `--fix` is used in dry run mode, the script attempts to automatically resolve submodule warnings by
-  checking out submodules to their latest tag (if `--allow-tags`` is enabled) or their remote default branch head.
+- **Fix**: When ``--fix`` is used in dry run mode, the script attempts to automatically resolve submodule warnings by
+  checking out submodules to their latest tag (if ``--allow-tags`` is enabled) or their remote default branch head.
 
 
 How it Works
@@ -26,9 +26,9 @@ For each submodule, the script checks the following conditions in order:
 
 1.  **Is it on a tag?**
 
-    -   If tags are allowed (`--allow-tags`):
+    -   If tags are allowed (``--allow-tags``):
 
-        -   If `--only-latest-tag` is used, it checks if the submodule
+        -   If ``--only-latest-tag`` is used, it checks if the submodule
             is on the latest tag (✅ Good state) or an older tag
             (⚠️ Warning state).
         -   Otherwise, any tag is considered a ✅ Good state.
