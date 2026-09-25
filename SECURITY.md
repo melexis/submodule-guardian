@@ -19,5 +19,6 @@ Please report all vulnerabilities through the
 the version you used and ways to replicate it, and if possible propose a Pull Request with a
 potential fix. Never paste a real token in a report; revoke it instead and say which scope it had.
 
-A fix is released as a new version, with a `Security` entry in [CHANGELOG.md](CHANGELOG.md) naming
+A fix is released as a new version. Its
+[release notes](https://github.com/melexis/submodule-guardian/releases) name the vulnerability, and
 the CVE when one was assigned.

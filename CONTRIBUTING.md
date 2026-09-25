@@ -56,8 +56,10 @@ the future. It might look obvious, but it will also help everyone reviewing the 
 correctly understand the intended functionality so that they can focus more on the implementation
 aspect.
 
-A change that users can notice belongs in two more places: the command line reference in
-`README.rst` when you touch the interface, and the `Unreleased` section of `CHANGELOG.md`.
+A change that users can notice belongs in the command line reference in `README.rst` as well, when
+you touch the interface. There is no changelog file to update: the release notes are generated from
+the merged pull requests, so give your pull request a title that reads well in them and a label
+(`bug`, `enhancement`, `documentation`) so it ends up in the right section.
 
 Code Review
 -----------
@@ -85,9 +87,10 @@ include and what to expect afterwards.
 
 Releases
 ========
-Maintainers release by tagging the commit `X.Y.Z` following [Semantic Versioning](https://semver.org).
-`setuptools-scm` derives the package version from that tag and GitHub Actions publishes it to PyPI.
-Before tagging, the `Unreleased` section of `CHANGELOG.md` is renamed to the new version.
+Maintainers release by drafting a release on GitHub with a new tag `X.Y.Z` following
+[Semantic Versioning](https://semver.org), and letting *Generate release notes* write the summary
+from the pull requests merged since the previous tag. `.github/release.yml` groups those by label.
+`setuptools-scm` derives the package version from the tag and GitHub Actions publishes it to PyPI.
 
 Code of Conduct
 ===============
