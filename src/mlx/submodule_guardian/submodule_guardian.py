@@ -30,6 +30,7 @@ from rich.theme import Theme
 
 from decouple import config
 from gitlab import Gitlab
+from gitlab.exceptions import GitlabUpdateError
 from gitlab.v4.objects import Project
 from mako.template import Template
 
@@ -379,6 +380,22 @@ class SubmoduleGuardian:
             else:
                 logger.info("Success: All submodules are in a good state.")
 
+    def _set_resolved_state(self, discussion):
+        """
+        Sets the resolved state of a discussion to the outcome of the submodule check.
+
+        The creation endpoint of GitLab ignores a `resolved` field, so the state always takes a
+        separate request.
+
+        Args:
+            discussion (ProjectMergeRequestDiscussion): The discussion holding the submodule status.
+        """
+        discussion.resolved = self.resolved
+        try:
+            discussion.save()
+        except GitlabUpdateError as error:
+            logger.warning(f"Could not mark the discussion as {'resolved' if self.resolved else 'unresolved'}: {error}")
+
     def _post_or_update_discussion(self, comment: str, search_string: str) -> Optional[str]:
         """
         Posts or updates a discussion on the MR.
@@ -406,8 +423,10 @@ class SubmoduleGuardian:
 
         if not matched_discussion_id or not matched_note_id:
             # Create new discussion
-            discussion_obj = self.mr.discussions.create({'body': comment, 'resolved': self.resolved})
+            discussion_obj = self.mr.discussions.create({'body': comment})
             logger.info('Created new discussion')
+            if discussion_obj:
+                self._set_resolved_state(discussion_obj)
             notes = discussion_obj.attributes.get('notes') if discussion_obj else None
             if not notes:
                 logger.warning("Could not determine URL for new comment: no notes returned")
@@ -426,8 +445,7 @@ class SubmoduleGuardian:
             note = discussion.notes.get(matched_note_id)
             note.body = comment
             note.save()
-            discussion.resolved = self.resolved
-            discussion.save()
+            self._set_resolved_state(discussion)
             logger.info(f'Updated existing discussion with ID {matched_discussion_id}')
             comment_url = f"{self.mr.web_url}#note_{note.id}"
             logger.debug(f"Updated discussion URL: {comment_url}")

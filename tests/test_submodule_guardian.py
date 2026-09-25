@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 import subprocess
 import os
 
+from gitlab.exceptions import GitlabUpdateError
+
 from mlx.submodule_guardian.submodule_guardian import SubmoduleGuardian, Submodule, main, get_current_branch
 
 
@@ -384,6 +386,52 @@ class SubmoduleGuardianTest(unittest.TestCase):
             # Check for the specific warning message from the updated _post_or_update_discussion
             self.assertTrue(any("Could not determine URL for new comment" in msg for msg in cm.output) or
                             any("no notes returned" in msg for msg in cm.output))
+
+    def test_post_or_update_discussion_resolves_new_discussion(self):
+        """Test that a new discussion is resolved with a separate request."""
+        guardian = self._create_guardian()
+        guardian.resolved = True
+        guardian.mr.discussions.list.return_value = []
+        mock_discussion_obj = MagicMock()
+        mock_discussion_obj.attributes = {'notes': [{'id': 'note_1'}]}
+        guardian.mr.discussions.create.return_value = mock_discussion_obj
+
+        guardian._post_or_update_discussion("comment", "search")
+
+        # GitLab ignores a resolved field on creation, so it is set afterwards
+        self.assertEqual(guardian.mr.discussions.create.call_args.args[0], {'body': "comment"})
+        self.assertTrue(mock_discussion_obj.resolved)
+        mock_discussion_obj.save.assert_called_once()
+
+    def test_post_or_update_discussion_leaves_new_discussion_unresolved(self):
+        """Test that a new discussion stays unresolved when a submodule needs attention."""
+        guardian = self._create_guardian()
+        guardian.resolved = False
+        guardian.mr.discussions.list.return_value = []
+        mock_discussion_obj = MagicMock()
+        mock_discussion_obj.attributes = {'notes': [{'id': 'note_1'}]}
+        guardian.mr.discussions.create.return_value = mock_discussion_obj
+
+        guardian._post_or_update_discussion("comment", "search")
+
+        self.assertFalse(mock_discussion_obj.resolved)
+        mock_discussion_obj.save.assert_called_once()
+
+    def test_post_or_update_discussion_resolving_failure_is_not_fatal(self):
+        """Test that a discussion which cannot be resolved only warns."""
+        guardian = self._create_guardian()
+        guardian.resolved = True
+        guardian.mr.discussions.list.return_value = []
+        mock_discussion_obj = MagicMock()
+        mock_discussion_obj.attributes = {'notes': [{'id': 'note_1'}]}
+        mock_discussion_obj.save.side_effect = GitlabUpdateError(error_message="403 Forbidden")
+        guardian.mr.discussions.create.return_value = mock_discussion_obj
+
+        with self.assertLogs('submodule-guardian', level='WARNING') as cm:
+            url = guardian._post_or_update_discussion("comment", "search")
+
+        self.assertIsNotNone(url)
+        self.assertTrue(any("Could not mark the discussion as resolved" in msg for msg in cm.output))
 
 
 # --- Main and Helper Function Tests ---
