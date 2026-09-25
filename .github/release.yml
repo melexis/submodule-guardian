@@ -1,0 +1,22 @@
+# Groups the release notes that GitHub generates from the merged pull requests.
+# Categories are matched top to bottom, so the catch-all comes last.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: Added
+      labels:
+        - enhancement
+    - title: Fixed
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Dependencies
+      labels:
+        - dependencies
+    - title: Other Changes
+      labels:
+        - "*"
