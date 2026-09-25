@@ -54,3 +54,10 @@ namespaces = true
 
 [tool.setuptools_scm]
 write_to = "src/mlx/submodule_guardian/_version.py"
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+# B404/B603/B607: git is run as a subprocess with a fixed argument list and without a shell.
+# B702: the Mako template renders a GitLab merge request comment, not a web page, and GitLab
+# sanitizes what it renders.
+skips = ["B404", "B603", "B607", "B702"]
